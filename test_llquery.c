@@ -178,6 +178,7 @@ void test_sort() {
 
 /* 测试迭代 */
 int count_callback(const struct llquery_kv *kv, void *user_data) {
+    (void)kv;  // Unused in this callback
     int *count = (int *)user_data;
     (*count)++;
     return 0;
@@ -400,6 +401,7 @@ void test_edge_cases() {
 
 /* 测试过滤 */
 bool filter_callback(const struct llquery_kv *kv, void *user_data) {
+    (void)user_data;  // Unused in this callback
     // 只保留键长度大于 3 的
     return kv->key_len > 3;
 }
@@ -429,7 +431,7 @@ void test_boundary_large_params() {
     
     // 超过最大限制
     const char *many = "p1=v1&p2=v2&p3=v3&p4=v4&p5=v5&p6=v6&p7=v7&p8=v8&p9=v9&p10=v10&p11=v11&p12=v12";
-    enum llquery_error err = llquery_parse(many, 0, &query);
+    llquery_parse(many, 0, &query);
     
     // 非严格模式应该解析前10个
     ASSERT_EQ(llquery_count(&query), 10, "Should parse up to max_pairs");

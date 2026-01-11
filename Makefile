@@ -1,7 +1,7 @@
 # Makefile for llquery - Fast query Parser
 
-CC = gcc
-CFLAGS = -Wall -Wextra -O3 -std=c99 -funroll-loops
+CC ?= gcc
+CFLAGS ?= -Wall -Wextra -O3 -std=c99 -funroll-loops
 DEBUG_CFLAGS = -Wall -Wextra -g -std=c99 -fsanitize=address
 
 # Library
