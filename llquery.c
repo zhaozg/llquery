@@ -351,14 +351,23 @@ void llquery_free(struct llquery *q) {
 
   llquery_internal_t *internal = get_internal(q);
 
+  // 释放键值对中分配的 key 和 value 缓冲区
+  if (q->kv_pairs) {
+    for (uint16_t i = 0; i < q->kv_count; i++) {
+      if (q->kv_pairs[i].key) {
+        internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+      }
+      if (q->kv_pairs[i].value) {
+        internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+      }
+    }
+    // 释放键值对数组
+    internal->free_fn(q->kv_pairs, internal->alloc_data);
+  }
+
   // 释放解码缓冲区
   if (q->decode_buffer && internal->decode_buffer_owned) {
     internal->free_fn((void *)q->decode_buffer, internal->alloc_data);
-  }
-
-  // 释放键值对数组
-  if (q->kv_pairs) {
-    internal->free_fn(q->kv_pairs, internal->alloc_data);
   }
 
   // 释放内部结构
@@ -593,21 +602,43 @@ enum llquery_error llquery_clone(struct llquery *dst,
     return err;
   }
 
+  llquery_internal_t *internal = get_internal(dst);
+
   // 复制基本字段
   dst->field_set = src->field_set;
   dst->kv_count = src->kv_count;
 
-  // 复制键值对
+  // 深拷贝键值对
   for (uint16_t i = 0; i < src->kv_count; i++) {
     const struct llquery_kv *src_kv = &src->kv_pairs[i];
     struct llquery_kv *dst_kv = &dst->kv_pairs[i];
 
-    *dst_kv = *src_kv;
+    // 复制 key
+    char *key_buf = internal->alloc_fn(src_kv->key_len + 1, internal->alloc_data);
+    if (!key_buf) {
+      llquery_free(dst);
+      return LQE_MEMORY_ERROR;
+    }
+    memcpy(key_buf, src_kv->key, src_kv->key_len);
+    key_buf[src_kv->key_len] = '\0';
+    dst_kv->key = key_buf;
+    dst_kv->key_len = src_kv->key_len;
+
+    // 复制 value
+    char *val_buf = internal->alloc_fn(src_kv->value_len + 1, internal->alloc_data);
+    if (!val_buf) {
+      llquery_free(dst);
+      return LQE_MEMORY_ERROR;
+    }
+    memcpy(val_buf, src_kv->value, src_kv->value_len);
+    val_buf[src_kv->value_len] = '\0';
+    dst_kv->value = val_buf;
+    dst_kv->value_len = src_kv->value_len;
+    dst_kv->is_encoded = src_kv->is_encoded;
   }
 
   // 如果需要，复制解码缓冲区
   if (src->decode_buffer && src->decode_buffer_size > 0) {
-    llquery_internal_t *internal = get_internal(dst);
     char *buf = internal->alloc_fn(src->decode_buffer_size, internal->alloc_data);
     if (!buf) {
       llquery_free(dst);
@@ -625,13 +656,28 @@ enum llquery_error llquery_clone(struct llquery *dst,
 void llquery_reset(struct llquery *q) {
   if (!q) return;
 
+  llquery_internal_t *internal = get_internal(q);
+  
+  // 释放键值对中分配的 key 和 value 缓冲区
+  if (q->kv_pairs) {
+    for (uint16_t i = 0; i < q->kv_count; i++) {
+      if (q->kv_pairs[i].key) {
+        internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+        q->kv_pairs[i].key = NULL;
+      }
+      if (q->kv_pairs[i].value) {
+        internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+        q->kv_pairs[i].value = NULL;
+      }
+    }
+  }
+
   // 重置计数
   q->kv_count = 0;
   q->field_set = 0;
 
   // 重置解码缓冲区（不释放内存）
   if (q->decode_buffer) {
-    llquery_internal_t *internal = get_internal(q);
     if (internal->decode_buffer_owned) {
       internal->free_fn((void *)q->decode_buffer, internal->alloc_data);
       q->decode_buffer = NULL;
@@ -878,6 +924,7 @@ uint16_t llquery_parse_fast(const char *query,
 
     if (current < end && *current == '=') {
       // 有值
+      const char *key_end = current;
       const char *value_start = current + 1;
 
       // 查找值结束
@@ -887,7 +934,7 @@ uint16_t llquery_parse_fast(const char *query,
       }
 
       kv_pairs[count].key = key_start;
-      kv_pairs[count].key_len = (size_t)(current - value_start + 1 - 1);
+      kv_pairs[count].key_len = (size_t)(key_end - key_start);
       kv_pairs[count].value = value_start;
       kv_pairs[count].value_len = (size_t)(current - value_start);
       kv_pairs[count].is_encoded = has_encoded;
@@ -917,12 +964,16 @@ uint16_t llquery_parse_fast(const char *query,
 }
 
 bool llquery_is_valid(const char *str, size_t len) {
-  if (!str || len == 0) {
+  if (!str) {
     return false;
   }
 
   if (len == 0) {
     len = strlen(str);
+  }
+  
+  if (len == 0) {
+    return false;
   }
 
   // 跳过前导'?'
@@ -950,12 +1001,16 @@ bool llquery_is_valid(const char *str, size_t len) {
 }
 
 uint16_t llquery_count_pairs(const char *query, size_t query_len) {
-  if (!query || query_len == 0) {
+  if (!query) {
     return 0;
   }
 
   if (query_len == 0) {
     query_len = strlen(query);
+  }
+  
+  if (query_len == 0) {
+    return 0;
   }
 
   // 跳过前导'?'
