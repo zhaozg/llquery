@@ -12,9 +12,14 @@
 #if defined(__GNUC__) || defined(__clang__)
 #define LIKELY(x)   __builtin_expect(!!(x), 1)
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+/* 阶段6：缓存预取提示 */
+#define PREFETCH_READ(addr)  __builtin_prefetch((addr), 0, 3)
+#define PREFETCH_WRITE(addr) __builtin_prefetch((addr), 1, 3)
 #else
 #define LIKELY(x)   (x)
 #define UNLIKELY(x) (x)
+#define PREFETCH_READ(addr)  ((void)(addr))
+#define PREFETCH_WRITE(addr) ((void)(addr))
 #endif
 
 /* 字符属性位掩码 */
@@ -569,18 +574,44 @@ const struct llquery_kv *llquery_get_kv(const struct llquery *q,
 const char *llquery_get_value(const struct llquery *q,
                               const char *key,
                               size_t key_len) {
-  if (!q || !key) {
+  if (UNLIKELY(!q || !key)) {
     return NULL;
   }
 
-  if (key_len == 0) {
+  if (UNLIKELY(key_len == 0)) {
     key_len = strlen(key);
   }
 
-  for (uint16_t i = 0; i < q->kv_count; i++) {
+  const uint16_t count = q->kv_count;
+  
+  // 阶段6优化：展开循环以减少分支预测失败，提升缓存效率
+  uint16_t i = 0;
+  
+  // 每次处理4个元素（循环展开）
+  for (; i + 3 < count; i += 4) {
+    const struct llquery_kv *kv0 = &q->kv_pairs[i];
+    const struct llquery_kv *kv1 = &q->kv_pairs[i + 1];
+    const struct llquery_kv *kv2 = &q->kv_pairs[i + 2];
+    const struct llquery_kv *kv3 = &q->kv_pairs[i + 3];
+    
+    if (kv0->key_len == key_len && memcmp(kv0->key, key, key_len) == 0) {
+      return kv0->value_len > 0 ? kv0->value : "";
+    }
+    if (kv1->key_len == key_len && memcmp(kv1->key, key, key_len) == 0) {
+      return kv1->value_len > 0 ? kv1->value : "";
+    }
+    if (kv2->key_len == key_len && memcmp(kv2->key, key, key_len) == 0) {
+      return kv2->value_len > 0 ? kv2->value : "";
+    }
+    if (kv3->key_len == key_len && memcmp(kv3->key, key, key_len) == 0) {
+      return kv3->value_len > 0 ? kv3->value : "";
+    }
+  }
+  
+  // 处理剩余元素
+  for (; i < count; i++) {
     const struct llquery_kv *kv = &q->kv_pairs[i];
-    if (kv->key_len == key_len &&
-      memcmp(kv->key, key, key_len) == 0) {
+    if (kv->key_len == key_len && memcmp(kv->key, key, key_len) == 0) {
       return kv->value_len > 0 ? kv->value : "";
     }
   }
@@ -593,19 +624,22 @@ uint16_t llquery_get_all_values(const struct llquery *q,
                                 size_t key_len,
                                 const char **values,
                                 uint16_t max_values) {
-  if (!q || !key || !values || max_values == 0) {
+  if (UNLIKELY(!q || !key || !values || max_values == 0)) {
     return 0;
   }
 
-  if (key_len == 0) {
+  if (UNLIKELY(key_len == 0)) {
     key_len = strlen(key);
   }
 
   uint16_t count = 0;
-  for (uint16_t i = 0; i < q->kv_count && count < max_values; i++) {
+  const uint16_t kv_count = q->kv_count;
+  
+  // 阶段6优化：简化循环以减少开销
+  for (uint16_t i = 0; i < kv_count && count < max_values; i++) {
     const struct llquery_kv *kv = &q->kv_pairs[i];
     if (kv->key_len == key_len &&
-      memcmp(kv->key, key, key_len) == 0) {
+        memcmp(kv->key, key, key_len) == 0) {
       values[count++] = kv->value_len > 0 ? kv->value : "";
     }
   }
@@ -616,18 +650,34 @@ uint16_t llquery_get_all_values(const struct llquery *q,
 bool llquery_has_key(const struct llquery *q,
                      const char *key,
                      size_t key_len) {
-  if (!q || !key) {
+  if (UNLIKELY(!q || !key)) {
     return false;
   }
 
-  if (key_len == 0) {
+  if (UNLIKELY(key_len == 0)) {
     key_len = strlen(key);
   }
 
-  for (uint16_t i = 0; i < q->kv_count; i++) {
+  const uint16_t count = q->kv_count;
+  uint16_t i = 0;
+  
+  // 阶段6优化：循环展开
+  for (; i + 3 < count; i += 4) {
+    const struct llquery_kv *kv0 = &q->kv_pairs[i];
+    const struct llquery_kv *kv1 = &q->kv_pairs[i + 1];
+    const struct llquery_kv *kv2 = &q->kv_pairs[i + 2];
+    const struct llquery_kv *kv3 = &q->kv_pairs[i + 3];
+    
+    if (kv0->key_len == key_len && memcmp(kv0->key, key, key_len) == 0) return true;
+    if (kv1->key_len == key_len && memcmp(kv1->key, key, key_len) == 0) return true;
+    if (kv2->key_len == key_len && memcmp(kv2->key, key, key_len) == 0) return true;
+    if (kv3->key_len == key_len && memcmp(kv3->key, key, key_len) == 0) return true;
+  }
+  
+  // 处理剩余元素
+  for (; i < count; i++) {
     const struct llquery_kv *kv = &q->kv_pairs[i];
-    if (kv->key_len == key_len &&
-      memcmp(kv->key, key, key_len) == 0) {
+    if (kv->key_len == key_len && memcmp(kv->key, key, key_len) == 0) {
       return true;
     }
   }
@@ -638,12 +688,15 @@ bool llquery_has_key(const struct llquery *q,
 uint16_t llquery_iterate(const struct llquery *q,
                          llquery_iter_cb callback,
                          void *user_data) {
-  if (!q || !callback) {
+  if (UNLIKELY(!q || !callback)) {
     return 0;
   }
 
   uint16_t count = 0;
-  for (uint16_t i = 0; i < q->kv_count; i++) {
+  const uint16_t kv_count = q->kv_count;
+  
+  // 阶段6优化：简化迭代以减少开销
+  for (uint16_t i = 0; i < kv_count; i++) {
     if (callback(&q->kv_pairs[i], user_data) != 0) {
       break;
     }
