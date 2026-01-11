@@ -52,7 +52,6 @@ static const char *complex_query = "name=John+Doe&age=30&city=New+York&country=U
 static const char *encoded_query = "search=hello%20world&filter=tag%3Dred&sort=date%20desc&page=1";
 static const char *many_params = "p1=v1&p2=v2&p3=v3&p4=v4&p5=v5&p6=v6&p7=v7&p8=v8&p9=v9&p10=v10&p11=v11&p12=v12&p13=v13&p14=v14&p15=v15";
 static const char *duplicate_keys = "tag=red&tag=blue&tag=green&tag=yellow&tag=orange";
-static const char *empty_values = "key1=&key2=&key3=&key4=&key5=";
 
 /* 基准测试函数 */
 

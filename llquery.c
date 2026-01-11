@@ -532,6 +532,9 @@ size_t llquery_stringify(const struct llquery *q,
                          char *buffer,
                          size_t buffer_size,
                          bool encode) {
+  // Note: encode parameter reserved for future URL encoding support
+  (void)encode;  // Suppress unused parameter warning
+  
   if (!q || q->kv_count == 0) {
     if (buffer && buffer_size > 0) {
       buffer[0] = '\0';
