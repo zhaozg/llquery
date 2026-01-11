@@ -12,10 +12,7 @@ llquery 为超高速 C 语言 query 解析库（llquery）， 采用状态机与
 
 ## 2. 主要接口与职责
 
-- `http_parser_query_init(struct http_parser_query *u)`：初始化 query 结构体。
-- `http_parser_parse_query(const char *buf, size_t buflen, int is_connect, struct http_parser_query *u)`：解析 query，填充结构体。
-- 结构体 `http_parser_query`：存储各 query 字段偏移、长度、端口等。
-- 详见 `llquery.h` 头文件。
+按照 `llquery.h` 的API, 结构体进行约定.
 
 ## 3. 任务类型
 
