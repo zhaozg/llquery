@@ -100,7 +100,10 @@ static const signed char HEX_LOOKUP[256] = {
 #define IS_SPACE(c)      (char_flags[(unsigned char)(c)] & CHAR_SPACE)
 #define IS_UPPER(c)      (char_flags[(unsigned char)(c)] & CHAR_UPPER)
 #define IS_ALPHA(c)      (char_flags[(unsigned char)(c)] & CHAR_ALPHA)
-#define IS_ALNUM(c)      (IS_HEX_DIGIT(c) || IS_ALPHA(c))  /* 0-9 A-Z a-z */
+#define IS_ALNUM(c)      (char_flags[(unsigned char)(c)] & (CHAR_HEX | CHAR_ALPHA))  /* 0-9 A-Z a-z */
+
+/* ASCII 转换常量 */
+#define ASCII_CASE_OFFSET 32  /* 'A' to 'a' offset */
 
 /* 默认内存分配器 */
 static void *default_alloc(size_t size, void *user_data) {
@@ -195,7 +198,7 @@ static void lowercase_string(char *str, size_t len) {
   for (size_t i = 0; i < len; i++) {
     unsigned char c = (unsigned char)str[i];
     if (IS_UPPER(c)) {
-      str[i] = (char)(c + 32);  // Convert A-Z to a-z
+      str[i] = (char)(c + ASCII_CASE_OFFSET);  /* Convert A-Z to a-z */
     }
   }
 }
