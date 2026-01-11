@@ -519,18 +519,58 @@ uint16_t llquery_filter(struct llquery *q,
   
   for (uint16_t read_idx = 0; read_idx < q->kv_count; read_idx++) {
     if (filter_fn(&q->kv_pairs[read_idx], user_data)) {
+      // Keep this item
       if (write_idx != read_idx) {
+        // Before overwriting write_idx position, free its old content if it hasn't been moved yet
+        // We know it hasn't been moved if write_idx < read_idx and we haven't processed it yet
+        // Actually, anything at write_idx that we're about to overwrite needs to be checked:
+        // If the item at write_idx was already copied forward, its pointers are now at an earlier position
+        // If the item at write_idx was filtered out, it was already freed
+        // If the item at write_idx was kept but we're now overwriting it, we need to free it
+        
+        // The key insight: positions < write_idx have been finalized (either copied to or freed)
+        // Position write_idx might still have old data that needs freeing
+        // But ONLY if read_idx is far enough ahead that write_idx hasn't been processed yet
+        
+        // Simple solution: always free what's at write_idx before overwriting if it's different
+        // But we must be careful not to double-free
+        
+        // Actually, let's use a different approach: mark positions as we move them
+        // Or simpler: only free items that are definitely filtered out
+        
+        // New approach: track that position read_idx data is being moved
+        // When we move data FROM read_idx TO write_idx, the write_idx position loses its data
+        // We need to free write_idx's old data IFF it wasn't already moved elsewhere
+        
+        // Safest approach: mark pointers as NULL after moving
         q->kv_pairs[write_idx] = q->kv_pairs[read_idx];
+        // Clear the source to prevent double-free
+        q->kv_pairs[read_idx].key = NULL;
+        q->kv_pairs[read_idx].value = NULL;
       }
       write_idx++;
     } else {
       // Free the filtered-out key/value pair
       if (q->kv_pairs[read_idx].key) {
         internal->free_fn((void *)q->kv_pairs[read_idx].key, internal->alloc_data);
+        q->kv_pairs[read_idx].key = NULL;
       }
       if (q->kv_pairs[read_idx].value) {
         internal->free_fn((void *)q->kv_pairs[read_idx].value, internal->alloc_data);
+        q->kv_pairs[read_idx].value = NULL;
       }
+    }
+  }
+  
+  // Free any remaining items beyond write_idx that weren't freed yet
+  for (uint16_t i = write_idx; i < q->kv_count; i++) {
+    if (q->kv_pairs[i].key) {
+      internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+      q->kv_pairs[i].key = NULL;
+    }
+    if (q->kv_pairs[i].value) {
+      internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+      q->kv_pairs[i].value = NULL;
     }
   }
 
