@@ -1,13 +1,31 @@
 #include "llquery.h"
 #include <stdlib.h>
 #include <string.h>
-#include <ctype.h>
 #include <assert.h>
 
 /* 默认配置 */
 #define DEFAULT_MAX_PAIRS 128
 #define DEFAULT_DECODE_BUF_SIZE 1024
 #define MAX_STACK_BUF 2048
+
+/* 分支预测提示 */
+#if defined(__GNUC__) || defined(__clang__)
+#define LIKELY(x)   __builtin_expect(!!(x), 1)
+#define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#else
+#define LIKELY(x)   (x)
+#define UNLIKELY(x) (x)
+#endif
+
+/* 字符属性位掩码 */
+#define CHAR_SEPARATOR   0x01  /* & 分隔符 */
+#define CHAR_EQUAL       0x02  /* = 等号 */
+#define CHAR_PERCENT     0x04  /* % 百分号 */
+#define CHAR_PLUS        0x08  /* + 加号 */
+#define CHAR_HEX         0x10  /* 十六进制字符 0-9A-Fa-f */
+#define CHAR_SPACE       0x20  /* 空白字符 */
+#define CHAR_UPPER       0x40  /* 大写字母 A-Z */
+#define CHAR_ALPHA       0x80  /* 字母字符 A-Z a-z */
 
 /* 内部结构体，用于管理内存分配器 */
 typedef struct llquery_internal {
@@ -17,6 +35,42 @@ typedef struct llquery_internal {
   bool use_custom_alloc;
   bool decode_buffer_owned;
 } llquery_internal_t;
+
+/* 字符分类查找表：使用位掩码实现零分支字符检查 */
+static const unsigned char char_flags[256] = {
+  /* 0x00-0x08 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  /* 0x08-0x0F */ 0x00, 0x20, 0x20, 0x20, 0x20, 0x20, 0x00, 0x00,
+  /* 0x10-0x17 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  /* 0x18-0x1F */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  /* 0x20-0x27 */ 0x20, 0x00, 0x00, 0x00, 0x00, 0x04, 0x01, 0x00,
+  /* 0x28-0x2F */ 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00,
+  /* 0x30-0x37 */ 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x10,
+  /* 0x38-0x3F */ 0x10, 0x10, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00,
+  /* 0x40-0x47 */ 0x00, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xD0, 0xC0,
+  /* 0x48-0x4F */ 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0,
+  /* 0x50-0x57 */ 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0, 0xC0,
+  /* 0x58-0x5F */ 0xC0, 0xC0, 0xC0, 0x00, 0x00, 0x00, 0x00, 0x00,
+  /* 0x60-0x67 */ 0x00, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x80,
+  /* 0x68-0x6F */ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+  /* 0x70-0x77 */ 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80,
+  /* 0x78-0x7F */ 0x80, 0x80, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+  /* 0x80-0xFF */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+};
 
 /* 十六进制字符查找表 */
 static const signed char HEX_LOOKUP[256] = {
@@ -37,6 +91,16 @@ static const signed char HEX_LOOKUP[256] = {
   -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
   -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
 };
+
+/* 宏定义：零分支字符检查 */
+#define IS_SEPARATOR(c)  (char_flags[(unsigned char)(c)] & CHAR_SEPARATOR)
+#define IS_EQUAL(c)      (char_flags[(unsigned char)(c)] & CHAR_EQUAL)
+#define IS_ENCODED(c)    (char_flags[(unsigned char)(c)] & (CHAR_PERCENT | CHAR_PLUS))
+#define IS_HEX_DIGIT(c)  (char_flags[(unsigned char)(c)] & CHAR_HEX)
+#define IS_SPACE(c)      (char_flags[(unsigned char)(c)] & CHAR_SPACE)
+#define IS_UPPER(c)      (char_flags[(unsigned char)(c)] & CHAR_UPPER)
+#define IS_ALPHA(c)      (char_flags[(unsigned char)(c)] & CHAR_ALPHA)
+#define IS_ALNUM(c)      (IS_HEX_DIGIT(c) || IS_ALPHA(c))  /* 0-9 A-Z a-z */
 
 /* 默认内存分配器 */
 static void *default_alloc(size_t size, void *user_data) {
@@ -59,7 +123,7 @@ static llquery_internal_t *get_internal(struct llquery *q) {
 static bool has_encoded_chars(const char *str, size_t len) {
   for (size_t i = 0; i < len; i++) {
     unsigned char c = (unsigned char)str[i];
-    if (c == '%' || c == '+') {
+    if (UNLIKELY(IS_ENCODED(c))) {
       return true;
     }
   }
@@ -67,7 +131,7 @@ static bool has_encoded_chars(const char *str, size_t len) {
 }
 
 static size_t decode_in_place(char *str) {
-  if (!str) return 0;
+  if (UNLIKELY(!str)) return 0;
 
   char *src = str;
   char *dst = str;
@@ -75,14 +139,14 @@ static size_t decode_in_place(char *str) {
   while (*src) {
     unsigned char c = (unsigned char)*src;
 
-    if (c == '+') {
+    if (UNLIKELY(c == '+')) {
       *dst++ = ' ';
       src++;
-    } else if (c == '%' && src[1] && src[2]) {
+    } else if (UNLIKELY(c == '%' && src[1] && src[2])) {
       int h1 = HEX_LOOKUP[(unsigned char)src[1]];
       int h2 = HEX_LOOKUP[(unsigned char)src[2]];
 
-      if (h1 >= 0 && h2 >= 0) {
+      if (LIKELY(h1 >= 0 && h2 >= 0)) {
         *dst++ = (char)((h1 << 4) | h2);
         src += 3;
       } else {
@@ -99,17 +163,17 @@ static size_t decode_in_place(char *str) {
 }
 
 static char* trim_string(char *str, size_t *len) {
-  if (!str || *len == 0) return str;
+  if (UNLIKELY(!str || *len == 0)) return str;
 
   // 去除前导空白
   char *start = str;
-  while (*start && isspace((unsigned char)*start)) {
+  while (*start && IS_SPACE(*start)) {
     start++;
   }
 
   // 去除尾随空白
   char *end = str + *len - 1;
-  while (end >= start && isspace((unsigned char)*end)) {
+  while (end >= start && IS_SPACE(*end)) {
     end--;
   }
 
@@ -129,7 +193,10 @@ static int compare_keys(const char *a, size_t a_len, const char *b, size_t b_len
 
 static void lowercase_string(char *str, size_t len) {
   for (size_t i = 0; i < len; i++) {
-    str[i] = (char)tolower((unsigned char)str[i]);
+    unsigned char c = (unsigned char)str[i];
+    if (IS_UPPER(c)) {
+      str[i] = (char)(c + 32);  // Convert A-Z to a-z
+    }
   }
 }
 
@@ -266,36 +333,48 @@ enum llquery_error llquery_parse_ex(const char *query,
     }
   }
 
-  // 主解析循环
+  // 主解析循环 - 优化版本使用批量处理
   uint16_t kv_index = 0;
 
-  while (current < end && kv_index < q->max_kv_count) {
+  while (LIKELY(current < end && kv_index < q->max_kv_count)) {
     // 跳过前导'&'
-    while (current < end && *current == '&') current++;
-    if (current >= end) break;
+    while (LIKELY(current < end) && IS_SEPARATOR(*current)) current++;
+    if (UNLIKELY(current >= end)) break;
 
     const char* key_start = current;
-    // 查找 key 结束
-    while (current < end && *current != '=' && *current != '&') current++;
+    
+    // 批量查找 key 结束位置（'=' 或 '&'）
     const char *key_end = current;
+    while (LIKELY(key_end < end) && !IS_EQUAL(*key_end) && !IS_SEPARATOR(*key_end)) {
+      key_end++;
+    }
+    current = key_end;
 
     const char *value_start = NULL;
     const char *value_end = NULL;
 
-    if (current < end && *current == '=') {
+    if (LIKELY(current < end) && IS_EQUAL(*current)) {
       // 有值
       current++;
       value_start = current;
-      while (current < end && *current != '&') current++;
-      value_end = current;
+      
+      // 批量查找值结束位置（'&'）
+      const char *amp = (const char *)memchr(current, '&', end - current);
+      if (amp) {
+        value_end = amp;
+        current = amp;
+      } else {
+        value_end = end;
+        current = end;
+      }
     } else {
       // 无值
       value_start = value_end = current;
     }
 
     // 跳过空 key
-    if (key_end - key_start == 0) {
-      if (current < end && *current == '&') current++;
+    if (UNLIKELY(key_end - key_start == 0)) {
+      if (current < end && IS_SEPARATOR(*current)) current++;
       continue;
     }
 
@@ -306,36 +385,45 @@ enum llquery_error llquery_parse_ex(const char *query,
     kv->value_len = (size_t)(value_end - value_start);
     // 为 key 分配临时 buffer 并拷贝内容，确保以 \0 结尾
     char *key_buf = internal->alloc_fn(kv->key_len + 1, internal->alloc_data);
+    if (UNLIKELY(!key_buf)) {
+      return LQE_MEMORY_ERROR;
+    }
     memcpy(key_buf, key_start, kv->key_len);
     key_buf[kv->key_len] = '\0';
     kv->key = key_buf;
     // 为 value 分配临时 buffer 并拷贝内容，确保以 \0 结尾
     char *val_buf = internal->alloc_fn(kv->value_len + 1, internal->alloc_data);
+    if (UNLIKELY(!val_buf)) {
+      return LQE_MEMORY_ERROR;
+    }
     memcpy(val_buf, value_start, kv->value_len);
     val_buf[kv->value_len] = '\0';
     kv->value = val_buf;
     kv->is_encoded = has_encoded;
 
-    if (q->flags & LQF_LOWERCASE_KEYS)
+    if (UNLIKELY(q->flags & LQF_LOWERCASE_KEYS))
       lowercase_string((char *)kv->key, kv->key_len);
-    if (q->flags & LQF_TRIM_VALUES)
+    if (UNLIKELY(q->flags & LQF_TRIM_VALUES))
       kv->value = trim_string((char *)kv->value, &kv->value_len);
 
     // 检查是否保留空值
-    if (!(q->flags & LQF_KEEP_EMPTY) && kv->value_len == 0) {
-      if (current < end && *current == '&') current++;
+    if (UNLIKELY(!(q->flags & LQF_KEEP_EMPTY) && kv->value_len == 0)) {
+      // 释放已分配的内存
+      internal->free_fn(key_buf, internal->alloc_data);
+      internal->free_fn(val_buf, internal->alloc_data);
+      if (current < end && IS_SEPARATOR(*current)) current++;
       continue;
     }
 
     kv_index++;
-    if (current < end && *current == '&') current++;
+    if (current < end && IS_SEPARATOR(*current)) current++;
   }
 
   q->kv_count = kv_index;
   q->field_set = 0xFF; // 设置所有字段
 
   // 检查是否超过限制
-  if (current < end && kv_index >= q->max_kv_count) {
+  if (UNLIKELY(current < end && kv_index >= q->max_kv_count)) {
     if (q->flags & LQF_STRICT) {
       return LQE_TOO_MANY_PAIRS;
     }
@@ -805,7 +893,7 @@ size_t llquery_url_encode(const char *input,
   // 计算所需空间
   for (size_t i = 0; i < input_len; i++) {
     unsigned char c = (unsigned char)input[i];
-    if (isalnum(c) || strchr(unreserved, c)) {
+    if (IS_ALNUM(c) || strchr(unreserved, c)) {
       needed++;
     } else {
       needed += 3; // %XX
@@ -828,7 +916,7 @@ size_t llquery_url_encode(const char *input,
   char *pos = output;
   for (size_t i = 0; i < input_len; i++) {
     unsigned char c = (unsigned char)input[i];
-    if (isalnum(c) || strchr(unreserved, c)) {
+    if (IS_ALNUM(c) || strchr(unreserved, c)) {
       *pos++ = (char)c;
     } else if (c == ' ') {
       *pos++ = '+';
@@ -1043,7 +1131,7 @@ bool llquery_is_valid(const char *str, size_t len) {
   for (size_t i = 0; i < len; i++) {
     char c = str[i];
     // 允许的字符：字母数字、-_.~、% (用于编码)、+、=、&
-    if (!isalnum((unsigned char)c) &&
+    if (!IS_ALNUM((unsigned char)c) &&
       c != '-' && c != '_' && c != '.' && c != '~' &&
       c != '%' && c != '+' && c != '=' && c != '&') {
       return false;
