@@ -514,13 +514,23 @@ uint16_t llquery_filter(struct llquery *q,
     return 0;
   }
 
+  llquery_internal_t *internal = get_internal(q);
   uint16_t write_idx = 0;
+  
   for (uint16_t read_idx = 0; read_idx < q->kv_count; read_idx++) {
     if (filter_fn(&q->kv_pairs[read_idx], user_data)) {
       if (write_idx != read_idx) {
         q->kv_pairs[write_idx] = q->kv_pairs[read_idx];
       }
       write_idx++;
+    } else {
+      // Free the filtered-out key/value pair
+      if (q->kv_pairs[read_idx].key) {
+        internal->free_fn((void *)q->kv_pairs[read_idx].key, internal->alloc_data);
+      }
+      if (q->kv_pairs[read_idx].value) {
+        internal->free_fn((void *)q->kv_pairs[read_idx].value, internal->alloc_data);
+      }
     }
   }
 
