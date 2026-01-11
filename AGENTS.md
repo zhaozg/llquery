@@ -24,17 +24,17 @@ llquery 为超高速 C 语言 query 解析库（llquery）， 采用状态机与
 
 ### 3.2 优化任务
 
-- 基于性能报告（见 `doc/BENCHMARKS.md`）定位瓶颈，分支预测等优化。
+- 基于性能基准测试（`make run-benchmark`）定位瓶颈，分支预测等优化。
 - 优化内存访问、减少分支、提升查表效率。
 - 保持线程安全与零全局状态。
 
 ### 3.3 文档任务
 
 - 完善 API 注释、用例说明、边界条件说明。
-- 维护测试用例文档（见 `doc/TESTING.md`）。
-- 记录优化思路、性能对比、设计权衡（见 `doc/OPTIMIZATION.md`、`doc/BENCHMARKS.md`）。
+- 维护 API 文档（见 `doc/API.md`）。
+- 记录优化思路、性能对比、设计权衡。
 
-## 4.4 开发与扩展指南
+## 4. 开发与扩展指南
 
 - 遵循 C99 标准，避免平台相关代码。
 - 所有结构体、函数必须文档化，注释需说明线程安全性、输入输出、边界条件。
@@ -45,7 +45,7 @@ llquery 为超高速 C 语言 query 解析库（llquery）， 采用状态机与
 ## 5. 贡献与协作流程
 
 1. Fork 仓库，创建 feature 分支。
-2. 开发/优化/补充文档，确保所有测试通过（`make test-all`）。
+2. 开发/优化/补充文档，确保所有测试通过（`make test`）。
 3. 补充/更新相关文档与注释。
 4. 提交 Pull Request，描述变更点与优化点。
 5. 由维护者 review 并合并。
@@ -67,8 +67,8 @@ llquery 为超高速 C 语言 query 解析库（llquery）， 采用状态机与
 
 - [llhttp](https://github.com/nodejs/llhttp)
 - [llurl](https://github.com/zhaozg/llurl)
-- RFC 3986
-- 本项目 `README.md`、`doc/` 目录
+- RFC 3986: Uniform Resource Identifier (URI): Generic Syntax
+- 本项目 `README.md`、`doc/API.md`
 
 ---
 
