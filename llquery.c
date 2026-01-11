@@ -25,7 +25,7 @@
 #define CHAR_HEX         0x10  /* 十六进制字符 0-9A-Fa-f */
 #define CHAR_SPACE       0x20  /* 空白字符 */
 #define CHAR_UPPER       0x40  /* 大写字母 A-Z */
-#define CHAR_ALPHA       0x80  /* 字母字符 A-Z a-z */
+#define CHAR_ALPHA       0x80  /* 字母字符 (A-Z 和 a-z 都设置此位) */
 
 /* 内部结构体，用于管理内存分配器 */
 typedef struct llquery_internal {
