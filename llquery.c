@@ -389,6 +389,8 @@ enum llquery_error llquery_parse_ex(const char *query,
     // 为 key 分配临时 buffer 并拷贝内容，确保以 \0 结尾
     char *key_buf = internal->alloc_fn(kv->key_len + 1, internal->alloc_data);
     if (UNLIKELY(!key_buf)) {
+      // 设置当前已成功解析的数量，然后返回错误
+      q->kv_count = kv_index;
       return LQE_MEMORY_ERROR;
     }
     memcpy(key_buf, key_start, kv->key_len);
@@ -397,6 +399,9 @@ enum llquery_error llquery_parse_ex(const char *query,
     // 为 value 分配临时 buffer 并拷贝内容，确保以 \0 结尾
     char *val_buf = internal->alloc_fn(kv->value_len + 1, internal->alloc_data);
     if (UNLIKELY(!val_buf)) {
+      // 释放刚分配的 key_buf
+      internal->free_fn(key_buf, internal->alloc_data);
+      q->kv_count = kv_index;
       return LQE_MEMORY_ERROR;
     }
     memcpy(val_buf, value_start, kv->value_len);
