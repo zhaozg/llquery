@@ -371,8 +371,6 @@ enum llquery_error llquery_parse_ex(const char *query,
   }
 
   // 阶段5优化：预分配字符串内存池以减少分配次数
-  // TODO: 需要更多测试和调试，暂时禁用
-  /*
   size_t estimated_pool_size = estimate_string_size(work_query, query_len);
   char *string_pool = internal->alloc_fn(estimated_pool_size, internal->alloc_data);
   if (LIKELY(string_pool != NULL)) {
@@ -381,7 +379,6 @@ enum llquery_error llquery_parse_ex(const char *query,
     internal->string_pool_used = 0;
     internal->string_pool_owned = true;
   }
-  */
 
   // 主解析循环 - 优化版本使用批量处理
   uint16_t kv_index = 0;
@@ -731,12 +728,23 @@ uint16_t llquery_filter(struct llquery *q,
       write_idx++;
     } else {
       // Free the filtered-out key/value pair
+      // 检查是否在内存池中
       if (q->kv_pairs[read_idx].key) {
-        internal->free_fn((void *)q->kv_pairs[read_idx].key, internal->alloc_data);
+        bool in_pool = (internal->string_pool && 
+                        q->kv_pairs[read_idx].key >= internal->string_pool &&
+                        q->kv_pairs[read_idx].key < internal->string_pool + internal->string_pool_size);
+        if (!in_pool) {
+          internal->free_fn((void *)q->kv_pairs[read_idx].key, internal->alloc_data);
+        }
         q->kv_pairs[read_idx].key = NULL;
       }
       if (q->kv_pairs[read_idx].value) {
-        internal->free_fn((void *)q->kv_pairs[read_idx].value, internal->alloc_data);
+        bool in_pool = (internal->string_pool && 
+                        q->kv_pairs[read_idx].value >= internal->string_pool &&
+                        q->kv_pairs[read_idx].value < internal->string_pool + internal->string_pool_size);
+        if (!in_pool) {
+          internal->free_fn((void *)q->kv_pairs[read_idx].value, internal->alloc_data);
+        }
         q->kv_pairs[read_idx].value = NULL;
       }
     }
@@ -745,11 +753,22 @@ uint16_t llquery_filter(struct llquery *q,
   // Free any remaining items beyond write_idx that weren't freed yet
   for (uint16_t i = write_idx; i < q->kv_count; i++) {
     if (q->kv_pairs[i].key) {
-      internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+      // 检查是否在内存池中
+      bool in_pool = (internal->string_pool && 
+                      q->kv_pairs[i].key >= internal->string_pool &&
+                      q->kv_pairs[i].key < internal->string_pool + internal->string_pool_size);
+      if (!in_pool) {
+        internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+      }
       q->kv_pairs[i].key = NULL;
     }
     if (q->kv_pairs[i].value) {
-      internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+      bool in_pool = (internal->string_pool && 
+                      q->kv_pairs[i].value >= internal->string_pool &&
+                      q->kv_pairs[i].value < internal->string_pool + internal->string_pool_size);
+      if (!in_pool) {
+        internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+      }
       q->kv_pairs[i].value = NULL;
     }
   }
