@@ -1,0 +1,83 @@
+name: Performance Tracking
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  benchmark-comparison:
+    name: Benchmark and Compare
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout PR code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential
+    
+    - name: Build and run current benchmark
+      run: |
+        make clean
+        make all
+        make run-benchmark > current-benchmark.txt
+        cat current-benchmark.txt
+    
+    - name: Parse benchmark results
+      id: parse-results
+      run: |
+        # Extract throughput value
+        THROUGHPUT=$(grep -oP 'Throughput: \K[0-9.]+' current-benchmark.txt | head -1)
+        QUERIES_PER_SEC=$(grep -oP 'Throughput:.*\K[0-9.]+(?= queries/sec)' current-benchmark.txt | head -1)
+        echo "throughput=${THROUGHPUT}" >> $GITHUB_OUTPUT
+        echo "queries_per_sec=${QUERIES_PER_SEC}" >> $GITHUB_OUTPUT
+        
+        # Create summary
+        echo "### Performance Metrics" >> $GITHUB_STEP_SUMMARY
+        echo "- Throughput: ${THROUGHPUT} MB/sec" >> $GITHUB_STEP_SUMMARY
+        echo "- Queries per second: ${QUERIES_PER_SEC}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "#### Detailed Results" >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+        cat current-benchmark.txt >> $GITHUB_STEP_SUMMARY
+        echo '```' >> $GITHUB_STEP_SUMMARY
+    
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-${{ github.sha }}
+        path: current-benchmark.txt
+        retention-days: 90
+    
+    - name: Comment benchmark results on PR
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const benchmarkResults = fs.readFileSync('current-benchmark.txt', 'utf8');
+          
+          const body = `## 📊 Performance Benchmark Results
+          
+          <details>
+          <summary>Click to expand benchmark results</summary>
+          
+          \`\`\`
+          ${benchmarkResults}
+          \`\`\`
+          
+          </details>
+          
+          Performance metrics have been collected for this PR.
+          `;
+          
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: body
+          });
