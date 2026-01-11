@@ -308,17 +308,63 @@ uint16_t llquery_parse_fast(const char *query,
 
 **特点:**
 - 栈分配，无动态内存分配
-- 适用于简单、性能关键的场景
-- 限制：查询字符串长度不能超过 2048 字节（如需解码）
+- 零拷贝设计，指针直接指向原始字符串
+- 高性能，适用于性能关键场景
+- **重要限制**：查询字符串长度不能超过 2048 字节（启用 `LQF_AUTO_DECODE` 时）
+
+**适用场景:**
+- ✅ **高频调用场景**：需要频繁解析短查询字符串
+- ✅ **嵌入式系统**：内存受限，避免动态分配
+- ✅ **性能敏感路径**：如热点函数、实时处理
+- ✅ **简单查询**：键值对数量已知且较少（<50）
+- ✅ **临时解析**：不需要长期保存结果
+
+**不适用场景:**
+- ❌ **长查询字符串**：超过 2048 字节且需要解码
+- ❌ **复杂处理**：需要排序、过滤、克隆等操作
+- ❌ **持久化需求**：结果需要长期保存或跨函数传递
+- ❌ **大量键值对**：超过栈数组大小
+- ❌ **需要内存管理**：需要自定义内存分配器
+
+**使用注意事项:**
+1. **生命周期**：返回的键值对指针指向原始查询字符串，必须确保原始字符串在使用期间有效
+2. **栈空间**：注意栈数组大小，避免栈溢出（建议 max_pairs < 100）
+3. **解码限制**：如果查询字符串超过 2048 字节且启用解码，函数将返回 0
+4. **零拷贝权衡**：高性能但结果与原始字符串耦合
+
+**性能对比:**
+- `llquery_parse_fast()`: ~41.5M ops/sec
+- `llquery_parse()`: ~3.95M ops/sec（简单查询）
+- 性能提升：~10倍（对于小规模查询）
 
 **示例:**
 ```c
-struct llquery_kv pairs[10];
-uint16_t count = llquery_parse_fast("a=1&b=2&c=3", 0, pairs, 10, LQF_AUTO_DECODE);
-for (uint16_t i = 0; i < count; i++) {
-    printf("%.*s = %.*s\n",
-           (int)pairs[i].key_len, pairs[i].key,
-           (int)pairs[i].value_len, pairs[i].value);
+// 适合的使用场景：HTTP 请求处理
+void handle_request(const char *query_string) {
+    struct llquery_kv pairs[20];  // 栈上分配
+    uint16_t count = llquery_parse_fast(query_string, 0, pairs, 20, LQF_AUTO_DECODE);
+    
+    // 在当前函数内使用结果
+    for (uint16_t i = 0; i < count; i++) {
+        process_param(pairs[i].key, pairs[i].key_len,
+                     pairs[i].value, pairs[i].value_len);
+    }
+    // 函数返回后，pairs 自动释放
+}
+
+// 不适合的使用场景：需要持久化
+struct llquery_kv *parse_and_store(const char *query) {
+    struct llquery_kv pairs[10];
+    llquery_parse_fast(query, 0, pairs, 10, LQF_NONE);
+    return pairs;  // ❌ 错误！返回栈上地址
+}
+
+// 正确的持久化方式：使用 llquery_parse()
+struct llquery *parse_and_store_correct(const char *query) {
+    struct llquery *q = malloc(sizeof(struct llquery));
+    llquery_init(q, 0, LQF_DEFAULT);
+    llquery_parse(query, 0, q);
+    return q;  // ✅ 正确
 }
 ```
 
