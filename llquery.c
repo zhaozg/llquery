@@ -34,6 +34,10 @@ typedef struct llquery_internal {
   void *alloc_data;
   bool use_custom_alloc;
   bool decode_buffer_owned;
+  char *string_pool;         /* 字符串内存池 */
+  size_t string_pool_size;   /* 内存池总大小 */
+  size_t string_pool_used;   /* 已使用的大小 */
+  bool string_pool_owned;    /* 是否拥有内存池 */
 } llquery_internal_t;
 
 /* 字符分类查找表：使用位掩码实现零分支字符检查 */
@@ -131,6 +135,32 @@ static bool has_encoded_chars(const char *str, size_t len) {
     }
   }
   return false;
+}
+
+/* 从内存池分配字符串 */
+static char* pool_alloc_string(llquery_internal_t *internal, size_t size) {
+  if (UNLIKELY(!internal->string_pool)) {
+    // 没有内存池，使用常规分配
+    return internal->alloc_fn(size, internal->alloc_data);
+  }
+  
+  // 检查内存池是否有足够空间
+  if (internal->string_pool_used + size <= internal->string_pool_size) {
+    char *ptr = internal->string_pool + internal->string_pool_used;
+    internal->string_pool_used += size;
+    return ptr;
+  }
+  
+  // 内存池空间不足，使用常规分配
+  // 注意：这会导致混合分配，需要在free时检查地址
+  return internal->alloc_fn(size, internal->alloc_data);
+}
+
+/* 估算需要的总字符串大小 */
+static size_t estimate_string_size(const char *query __attribute__((unused)), size_t len) {
+  // 估算：每个字符最多需要2字节（\0终止符），加上一些缓冲
+  // 实际大小通常小于查询字符串长度的2倍
+  return len * 2 + 256;  // 额外的256字节缓冲
 }
 
 static size_t decode_in_place(char *str) {
@@ -240,6 +270,10 @@ enum llquery_error llquery_init_ex(struct llquery *q,
   internal->alloc_data = alloc_data;
   internal->use_custom_alloc = true;
   internal->decode_buffer_owned = false;
+  internal->string_pool = NULL;
+  internal->string_pool_size = 0;
+  internal->string_pool_used = 0;
+  internal->string_pool_owned = false;
 
   // 分配键值对数组
   struct llquery_kv *kv_pairs = alloc_fn(sizeof(struct llquery_kv) * max_pairs, alloc_data);
@@ -336,6 +370,19 @@ enum llquery_error llquery_parse_ex(const char *query,
     }
   }
 
+  // 阶段5优化：预分配字符串内存池以减少分配次数
+  // TODO: 需要更多测试和调试，暂时禁用
+  /*
+  size_t estimated_pool_size = estimate_string_size(work_query, query_len);
+  char *string_pool = internal->alloc_fn(estimated_pool_size, internal->alloc_data);
+  if (LIKELY(string_pool != NULL)) {
+    internal->string_pool = string_pool;
+    internal->string_pool_size = estimated_pool_size;
+    internal->string_pool_used = 0;
+    internal->string_pool_owned = true;
+  }
+  */
+
   // 主解析循环 - 优化版本使用批量处理
   uint16_t kv_index = 0;
 
@@ -386,8 +433,9 @@ enum llquery_error llquery_parse_ex(const char *query,
     // 先计算长度
     kv->key_len = (size_t)(key_end - key_start);
     kv->value_len = (size_t)(value_end - value_start);
-    // 为 key 分配临时 buffer 并拷贝内容，确保以 \0 结尾
-    char *key_buf = internal->alloc_fn(kv->key_len + 1, internal->alloc_data);
+    
+    // 阶段5优化：使用内存池分配 key 和 value
+    char *key_buf = pool_alloc_string(internal, kv->key_len + 1);
     if (UNLIKELY(!key_buf)) {
       // 设置当前已成功解析的数量，然后返回错误
       q->kv_count = kv_index;
@@ -396,11 +444,16 @@ enum llquery_error llquery_parse_ex(const char *query,
     memcpy(key_buf, key_start, kv->key_len);
     key_buf[kv->key_len] = '\0';
     kv->key = key_buf;
-    // 为 value 分配临时 buffer 并拷贝内容，确保以 \0 结尾
-    char *val_buf = internal->alloc_fn(kv->value_len + 1, internal->alloc_data);
+    
+    char *val_buf = pool_alloc_string(internal, kv->value_len + 1);
     if (UNLIKELY(!val_buf)) {
-      // 释放刚分配的 key_buf
-      internal->free_fn(key_buf, internal->alloc_data);
+      // 释放key_buf（如果不在池中）
+      bool key_in_pool = (internal->string_pool && 
+                          key_buf >= internal->string_pool &&
+                          key_buf < internal->string_pool + internal->string_pool_size);
+      if (!key_in_pool) {
+        internal->free_fn(key_buf, internal->alloc_data);
+      }
       q->kv_count = kv_index;
       return LQE_MEMORY_ERROR;
     }
@@ -416,9 +469,19 @@ enum llquery_error llquery_parse_ex(const char *query,
 
     // 检查是否保留空值
     if (UNLIKELY(!(q->flags & LQF_KEEP_EMPTY) && kv->value_len == 0)) {
-      // 释放已分配的内存
-      internal->free_fn(key_buf, internal->alloc_data);
-      internal->free_fn(val_buf, internal->alloc_data);
+      // 检查字符串是否在内存池中，只释放不在池中的
+      bool key_in_pool = (internal->string_pool && 
+                          key_buf >= internal->string_pool &&
+                          key_buf < internal->string_pool + internal->string_pool_size);
+      bool val_in_pool = (internal->string_pool && 
+                          val_buf >= internal->string_pool &&
+                          val_buf < internal->string_pool + internal->string_pool_size);
+      if (!key_in_pool) {
+        internal->free_fn(key_buf, internal->alloc_data);
+      }
+      if (!val_in_pool) {
+        internal->free_fn(val_buf, internal->alloc_data);
+      }
       if (current < end && IS_SEPARATOR(*current)) current++;
       continue;
     }
@@ -447,17 +510,38 @@ void llquery_free(struct llquery *q) {
 
   llquery_internal_t *internal = get_internal(q);
 
-  // 释放键值对中分配的 key 和 value 缓冲区
+  // 阶段5优化：释放字符串
   if (q->kv_pairs) {
     for (uint16_t i = 0; i < q->kv_count; i++) {
+      // 检查key是否需要释放
       if (q->kv_pairs[i].key) {
-        internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+        // 如果有内存池，检查指针是否在池中
+        bool in_pool = (internal->string_pool && 
+                        q->kv_pairs[i].key >= internal->string_pool &&
+                        q->kv_pairs[i].key < internal->string_pool + internal->string_pool_size);
+        if (!in_pool) {
+          internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+        }
       }
+      // 检查value是否需要释放
       if (q->kv_pairs[i].value) {
-        internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+        bool in_pool = (internal->string_pool && 
+                        q->kv_pairs[i].value >= internal->string_pool &&
+                        q->kv_pairs[i].value < internal->string_pool + internal->string_pool_size);
+        if (!in_pool) {
+          internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+        }
       }
     }
-    // 释放键值对数组
+  }
+  
+  // 释放内存池（如果拥有）
+  if (internal->string_pool_owned && internal->string_pool) {
+    internal->free_fn(internal->string_pool, internal->alloc_data);
+  }
+  
+  // 释放键值对数组
+  if (q->kv_pairs) {
     internal->free_fn(q->kv_pairs, internal->alloc_data);
   }
 
@@ -807,18 +891,38 @@ void llquery_reset(struct llquery *q) {
 
   llquery_internal_t *internal = get_internal(q);
   
-  // 释放键值对中分配的 key 和 value 缓冲区
+  // 阶段5优化：释放所有字符串（检查是否在内存池中）
   if (q->kv_pairs) {
     for (uint16_t i = 0; i < q->kv_count; i++) {
       if (q->kv_pairs[i].key) {
-        internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+        // 检查是否在内存池中
+        bool in_pool = (internal->string_pool && 
+                        q->kv_pairs[i].key >= internal->string_pool &&
+                        q->kv_pairs[i].key < internal->string_pool + internal->string_pool_size);
+        if (!in_pool) {
+          internal->free_fn((void *)q->kv_pairs[i].key, internal->alloc_data);
+        }
         q->kv_pairs[i].key = NULL;
       }
       if (q->kv_pairs[i].value) {
-        internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+        bool in_pool = (internal->string_pool && 
+                        q->kv_pairs[i].value >= internal->string_pool &&
+                        q->kv_pairs[i].value < internal->string_pool + internal->string_pool_size);
+        if (!in_pool) {
+          internal->free_fn((void *)q->kv_pairs[i].value, internal->alloc_data);
+        }
         q->kv_pairs[i].value = NULL;
       }
     }
+  }
+  
+  // 释放内存池
+  if (internal->string_pool_owned && internal->string_pool) {
+    internal->free_fn(internal->string_pool, internal->alloc_data);
+    internal->string_pool = NULL;
+    internal->string_pool_size = 0;
+    internal->string_pool_used = 0;
+    internal->string_pool_owned = false;
   }
 
   // 重置计数
