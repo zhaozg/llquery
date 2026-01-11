@@ -69,10 +69,10 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y valgrind build-essential
     
-    - name: Build with debug symbols
+    - name: Build with debug symbols (without ASan for Valgrind compatibility)
       run: |
         make clean
-        make debug
+        CC=gcc CFLAGS="-Wall -Wextra -g -std=c99" make test_llquery
     
     - name: Run tests with Valgrind
       run: |

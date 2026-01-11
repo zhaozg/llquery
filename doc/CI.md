@@ -152,6 +152,18 @@ cppcheck --enable=all --std=c99 llquery.c llquery.h
 
 ## 故障排除
 
+### Valgrind 和 AddressSanitizer 冲突
+Valgrind 和 AddressSanitizer (ASan) 不能同时使用，因为它们都会对内存操作进行插桩，会相互冲突。
+
+**解决方案**：
+- Valgrind 测试使用不带 ASan 的构建：`CC=gcc CFLAGS="-Wall -Wextra -g -std=c99" make test_llquery`
+- ASan 测试在单独的工作流中运行（sanitizers.yml）
+
+如果看到以下警告，说明构建时使用了 ASan：
+```
+ASan runtime does not come first in initial library list
+```
+
 ### Valgrind 在 macOS 上不可用
 Valgrind 在较新的 macOS 版本上不可用。在 macOS 上，CI 会跳过 Valgrind 测试，使用 AddressSanitizer 代替。
 
