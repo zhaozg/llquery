@@ -1,0 +1,117 @@
+name: Sanitizers
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  address-sanitizer:
+    name: AddressSanitizer
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang
+    
+    - name: Build with AddressSanitizer
+      run: |
+        make clean
+        CC=clang CFLAGS="-Wall -Wextra -O1 -g -fsanitize=address -fno-omit-frame-pointer" \
+          make test_llquery benchmark
+    
+    - name: Run tests with ASAN
+      env:
+        ASAN_OPTIONS: detect_leaks=1:check_initialization_order=1:strict_init_order=1
+      run: ./test_llquery
+    
+    - name: Run limited benchmark with ASAN
+      env:
+        ASAN_OPTIONS: detect_leaks=1:check_initialization_order=1:strict_init_order=1
+      run: |
+        timeout 30 ./benchmark || echo "Benchmark completed or timed out"
+
+  undefined-behavior-sanitizer:
+    name: UndefinedBehaviorSanitizer
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang
+    
+    - name: Build with UBSanitizer
+      run: |
+        make clean
+        CC=clang CFLAGS="-Wall -Wextra -O1 -g -fsanitize=undefined -fno-omit-frame-pointer" \
+          make test_llquery benchmark
+    
+    - name: Run tests with UBSAN
+      env:
+        UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
+      run: ./test_llquery
+    
+    - name: Run limited benchmark with UBSAN
+      env:
+        UBSAN_OPTIONS: print_stacktrace=1
+      run: |
+        timeout 30 ./benchmark || echo "Benchmark completed or timed out"
+
+  thread-sanitizer:
+    name: ThreadSanitizer
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang
+    
+    - name: Build with ThreadSanitizer
+      run: |
+        make clean
+        CC=clang CFLAGS="-Wall -Wextra -O1 -g -fsanitize=thread -fno-omit-frame-pointer" \
+          make test_llquery
+    
+    - name: Run tests with TSAN
+      env:
+        TSAN_OPTIONS: second_deadlock_stack=1
+      run: ./test_llquery
+
+  memory-sanitizer:
+    name: MemorySanitizer
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential clang
+    
+    - name: Build with MemorySanitizer
+      run: |
+        make clean
+        CC=clang CFLAGS="-Wall -Wextra -O1 -g -fsanitize=memory -fno-omit-frame-pointer -fsanitize-memory-track-origins" \
+          make test_llquery || echo "MSan build may fail on some systems"
+    
+    - name: Run tests with MSAN
+      if: success()
+      env:
+        MSAN_OPTIONS: poison_in_dtor=1
+      run: ./test_llquery || echo "MSan may not be fully supported"

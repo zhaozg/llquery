@@ -1,5 +1,8 @@
 # llquery - 超高速 URL 查询字符串解析库
 
+[![CI](https://github.com/zhaozg/llquery/workflows/CI/badge.svg)](https://github.com/zhaozg/llquery/actions/workflows/ci.yml)
+[![Sanitizers](https://github.com/zhaozg/llquery/workflows/Sanitizers/badge.svg)](https://github.com/zhaozg/llquery/actions/workflows/sanitizers.yml)
+[![Performance](https://github.com/zhaozg/llquery/workflows/Performance%20Tracking/badge.svg)](https://github.com/zhaozg/llquery/actions/workflows/performance.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![C99](https://img.shields.io/badge/std-C99-blue.svg)](https://en.wikipedia.org/wiki/C99)
 
@@ -212,9 +215,25 @@ llquery/
 ├── Makefile           # 构建配置
 ├── README.md          # 项目说明
 ├── AGENTS.md          # AI 开发指南
+├── .github/
+│   ├── workflows/     # GitHub Actions CI/CD 配置
+│   └── CI.md          # CI/CD 文档
 └── doc/
     └── API.md         # API 文档
 ```
+
+## 🔄 持续集成
+
+本项目使用 GitHub Actions 进行持续集成，包括：
+
+- ✅ **功能测试**: 19 个测试用例，覆盖所有核心功能
+- 🔍 **内存检测**: Valgrind 和 AddressSanitizer 检测内存泄漏
+- 🚀 **性能测试**: 自动运行基准测试并报告性能指标
+- 📊 **代码覆盖率**: 自动生成覆盖率报告
+- 🔧 **静态分析**: cppcheck 检测潜在问题
+- 🖥️ **多平台支持**: 在 Ubuntu 和 macOS 上测试
+
+详细信息请参阅 [CI 文档](.github/CI.md)。
 
 ## 🧪 测试
 
